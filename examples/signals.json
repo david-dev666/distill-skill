@@ -1,0 +1,81 @@
+{
+  "source": "examples/trace.md",
+  "extracted_at": "2026-09-30T09:26:24+00:00",
+  "meta": {
+    "lines": 90,
+    "samples": 1
+  },
+  "signals": {
+    "goal": [
+      {
+        "text": "定位内存泄漏根因并修复。验收标准：压测下内存曲线平稳（rss 涨到阈值后持平）",
+        "confidence": 0.9,
+        "line": 0
+      }
+    ],
+    "trigger": [
+      {
+        "text": "Node 服务内存持续上涨 / 被 OOM 杀掉 / 定时任务越来越慢",
+        "confidence": 0.9,
+        "line": 0
+      }
+    ],
+    "actions": [
+      {
+        "text": "构造最小复现：嫌疑点（如缓存、数组）+ 每秒打印 process.memoryUsage 与嫌疑数据结构长度",
+        "confidence": 0.9,
+        "line": 0
+      },
+      {
+        "text": "压测运行，观察哪一项无界增长——增长者即泄漏源",
+        "confidence": 0.9,
+        "line": 0
+      },
+      {
+        "text": "修复后重新压测，确认内存曲线平稳才收工",
+        "confidence": 0.9,
+        "line": 0
+      }
+    ],
+    "decisions": [
+      {
+        "text": "嫌疑结构长度无界增长 → 它是泄漏源；平稳 → 排除，查下一个",
+        "confidence": 0.8,
+        "line": 0
+      },
+      {
+        "text": "数据须全量保留 → 落盘日志；仅需近期 → 环形缓冲固定容量",
+        "confidence": 0.8,
+        "line": 0
+      }
+    ],
+    "pitfalls": [
+      {
+        "text": "直觉先怀疑缓存，但它有 TTL 清理、实测平稳；真凶是无界审计数组",
+        "fix": "无界数组是最常见泄漏形态，优先排查所有只 push 不清的数组/Map",
+        "confidence": 0.9,
+        "line": 0
+      },
+      {
+        "text": "重跑报 EADDRINUSE，残留进程占端口",
+        "fix": "按端口查 PID 再杀：lsof -ti:{{port}} | xargs kill",
+        "confidence": 0.8,
+        "line": 0
+      },
+      {
+        "text": "不看数据直接\"优化\"直觉嫌疑点",
+        "fix": "禁止。修复前必须量化确认泄漏源（每秒打印 rss + 各结构长度）",
+        "confidence": 0.9,
+        "line": 0
+      }
+    ],
+    "assets": [
+      {
+        "text": "server.js",
+        "confidence": 0.6,
+        "line": 8
+      }
+    ]
+  },
+  "routing_hint": "skill"
+}

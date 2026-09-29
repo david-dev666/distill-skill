@@ -1,0 +1,15 @@
+{
+  "name": "distill-skill",
+  "owner": {
+    "name": "david-dev666"
+  },
+  "plugins": [
+    {
+      "name": "distill-skill",
+      "source": "./",
+      "description": "从会话轨迹蒸馏可复用 skill：六类信号抽取、闸门分流、骨架生成与校验",
+      "version": "0.1.0",
+      "strict": false
+    }
+  ]
+}

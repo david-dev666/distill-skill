@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>distill-skill · 蒸馏示例：Node 内存泄漏排查</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "PingFang SC", sans-serif; line-height: 1.6; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 48px 24px 80px; }
+  header { text-align: center; margin-bottom: 40px; }
+  header h1 { font-size: 26px; margin-bottom: 8px; }
+  header h1 .arrow { color: var(--accent); font-family: var(--mono); }
+  header p { color: var(--muted); font-size: 14px; }
+
+  .cols { display: grid; grid-template-columns: 1fr 56px 1fr; gap: 0; align-items: stretch; }
+  @media (max-width: 1000px) { .cols { grid-template-columns: 1fr; } .mid { display: none !important; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+  .panel .head { padding: 10px 16px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
+  .panel .head .sub { color: var(--muted); font-size: 11px; }
+  .panel pre { padding: 18px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.75; flex: 1; }
+
+  .mid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+  .mid .flow { font-family: var(--mono); font-size: 22px; color: var(--accent); }
+  .mid .note { writing-mode: vertical-rl; font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+
+  /* 轨迹侧高亮 */
+  .t-user { color: var(--accent); font-weight: 600; }
+  .t-out { color: var(--muted); }
+  .t-bad { color: var(--red); }
+  /* skill 侧 */
+  .s-fm { color: var(--muted); }
+  .s-fm b { color: var(--accent); font-weight: normal; }
+  .s-h { color: var(--yellow); font-weight: 600; }
+  .s-cmd { color: var(--green); }
+  .s-fix { color: var(--green); }
+  .s-bad { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>trace.md <span class="arrow">→ distill →</span> skill.md</h1>
+  <p>一次真实会话，蒸馏成一个可复用的 skill · 排查 Node 服务内存泄漏（命令输出均为真实执行结果）</p>
+</header>
+
+<div class="cols">
+
+  <!-- 左：原始轨迹 -->
+  <div class="panel">
+    <div class="head"><span style="color:var(--muted)">trace.md</span><span class="sub">原始会话轨迹 · 一次性叙述</span></div>
+    <pre><span class="t-user">**User**</span>: 线上一个 Node 小服务跑两三天内存就涨到 1.5G
+然后被 OOM 杀掉。帮我找到泄漏根因并修掉，
+做完了的标准是：压测下内存曲线平稳。
+
+<span class="t-user">**Assistant**</span>: 先写一个最小复现：带请求缓存的 HTTP 服务，
+cache 有 100ms TTL 清理，另有一个 history 数组做审计。
+
+$ MODE=load node server.js
+
+真实输出（8 秒压测）：
+<span class="t-out">{"rss":98, "history":807,  "cacheSize":87}
+{"rss":121,"history":1634, "cacheSize":75}
+{"rss":129,"history":3296, "cacheSize":87}
+{"rss":130,"history":6664, "cacheSize":81}
+{"rss":130,"history":10021,"cacheSize":83}</span>
+
+<span class="t-user">**User**</span>: cache 不是有 TTL 吗，怎么还涨内存？
+
+<span class="t-user">**Assistant**</span>: 看数据分流：
+- cacheSize 稳定在 ~85 → TTL 清理有效，cache 排除
+- history 每秒 +1000 无界增长 → 真凶是审计数组
+
+<span class="t-bad">坑：直觉先怀疑 cache，但它实测平稳；
+真凶是看起来"无害"的 history 数组。</span>
+
+<span class="t-user">**User**</span>: 那怎么修？
+
+<span class="t-user">**Assistant**</span>: 审计只需近期记录 → 环形缓冲：
+
+$ const MAX_HISTORY = 1000;
+$ if (history.length > 1000) history.shift();
+
+重跑时踩坑：<span class="t-bad">Error: listen EADDRINUSE</span>
+上一个进程没杀干净。
+
+$ lsof -ti:3000 | xargs kill
+$ MODE=load node server.js
+
+修复后真实输出：
+<span class="t-out">{"rss":99, "history":1000,"cacheSize":85}
+{"rss":112,"history":1000,"cacheSize":74}
+{"rss":117,"history":1000,"cacheSize":82}
+{"rss":115,"history":1000,"cacheSize":81}</span>
+
+验收通过：压测下内存不再持续上涨。</pre>
+  </div>
+
+  <!-- 中：蒸馏箭头 -->
+  <div class="mid">
+    <div class="flow">→</div>
+    <div class="note">压缩 delta · 抽象泛化 · 闸门分流</div>
+    <div class="flow">→</div>
+  </div>
+
+  <!-- 右：生成的 skill -->
+  <div class="panel">
+    <div class="head"><span style="color:var(--green)">skill.md</span><span class="sub">蒸馏产物 · 换个项目直接可用</span></div>
+    <pre><span class="s-fm">---
+<b>name</b>: node-memory-leak
+<b>description</b>: 当 Node 服务内存持续上涨 / 被 OOM 杀掉 /
+定时任务越来越慢时，定位泄漏根因并修复。
+---</span>
+
+# node-memory-leak
+
+<span class="s-h">## 目标 / 成功判据</span>
+- 定位内存泄漏根因并修复
+- 验收标准：压测下内存曲线平稳（rss 涨到阈值后持平）
+
+<span class="s-h">## 触发条件</span>
+- Node 服务内存持续上涨 / 被 OOM 杀掉 / 定时任务越来越慢
+
+<span class="s-h">## SOP</span>
+1. 构造最小复现：嫌疑点（如缓存、数组）+ 每秒打印
+   <span class="s-cmd">process.memoryUsage</span> 与嫌疑数据结构长度
+2. 压测运行，观察哪一项无界增长——增长者即泄漏源
+3. 修复后重新压测，确认内存曲线平稳才收工
+
+<span class="s-h">## 决策点</span>
+- 嫌疑结构长度无界增长 → 它是泄漏源
+- 平稳 → 排除，查下一个
+- 数据须全量保留 → 落盘日志
+- 仅需近期 → 环形缓冲固定容量
+
+<span class="s-h">## 硬约束（坑与修正）</span>
+- <span class="s-bad">直觉先怀疑缓存，但它有 TTL 清理、实测平稳；
+  真凶是无界审计数组</span>
+  <span class="s-fix">修正: 无界数组是最常见泄漏形态，
+  优先排查所有只 push 不清的数组/Map</span>
+- <span class="s-bad">重跑报 EADDRINUSE，残留进程占端口</span>
+  <span class="s-fix">修正: 按端口查 PID 再杀：
+  lsof -ti:{{port}} | xargs kill</span>
+- <span class="s-bad">不看数据直接"优化"直觉嫌疑点</span>
+  <span class="s-fix">修正: 禁止。修复前必须量化确认泄漏源</span>
+
+<span class="s-h">## 可复用资产</span>
+- server.js（最小复现脚本模板）</pre>
+  </div>
+
+</div>
+</div>
+</body>
+</html>
